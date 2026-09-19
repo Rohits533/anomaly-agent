@@ -5,3 +5,4 @@ scikit-learn==1.4.2
 numpy==1.26.4
 pyyaml==6.0.1
 pytest==8.1.1
+joblib==1.4.0
