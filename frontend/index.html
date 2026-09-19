@@ -58,21 +58,12 @@
   <p class="subtitle">Zero-trust anomaly detection for distributed systems</p>
 
   <div class="card">
-    <h2>1. Initialize Detector</h2>
+    <h2>Test Detection</h2>
     <p style="font-size:0.85rem;color:#8b949e;margin-bottom:1rem;">
-      Trains the Isolation Forest on a synthetic baseline. Runs instantly.
+      The model is trained at server startup. Click below to test.
     </p>
-    <button id="trainBtn" onclick="train()">Initialize Detector</button>
-    <div class="status" id="trainStatus">Not initialized</div>
-  </div>
-
-  <div class="card">
-    <h2>2. Test Detection</h2>
-    <p style="font-size:0.85rem;color:#8b949e;margin-bottom:1rem;">
-      Send a snapshot and see if the detector flags it as anomalous.
-    </p>
-    <button id="normalBtn" onclick="detect(false)" disabled>Send Normal Snapshot</button>
-    <button id="anomalyBtn" onclick="detect(true)" disabled>Send Anomalous Snapshot</button>
+    <button id="normalBtn" onclick="detect('normal')">Send Normal Snapshot</button>
+    <button id="anomalyBtn" onclick="detect('anomaly')">Send Anomalous Snapshot</button>
     <div class="status" id="detectStatus"></div>
     <div class="hint" id="coldStartHint" style="display:none;">
       First request may take up to 50 seconds if the server was idle. Please wait...
@@ -83,18 +74,7 @@
   <script>
     const API_URL = "https://anomaly-agent-lwvs.onrender.com";
 
-    function makeSnapshot(anomalous) {
-      return {
-        timestamp: new Date().toISOString(),
-        cpu_percent: anomalous ? 95.0 : 10.0,
-        memory_percent: anomalous ? 90.0 : 40.0,
-        disk_percent: 50.0,
-        net_sent_mb: anomalous ? 500.0 : 1.0,
-        net_recv_mb: anomalous ? 800.0 : 2.0,
-      };
-    }
-
-    async function fetchWithTimeout(url, options, timeoutMs = 60000) {
+    async function fetchWithTimeout(url, options, timeoutMs = 70000) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -105,33 +85,7 @@
       }
     }
 
-    async function train() {
-      const btn = document.getElementById("trainBtn");
-      const status = document.getElementById("trainStatus");
-      const hint = document.getElementById("coldStartHint");
-
-      btn.disabled = true;
-      status.textContent = "Initializing...";
-      hint.style.display = "block";
-
-      try {
-        const res = await fetchWithTimeout(`${API_URL}/train`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        });
-        const data = await res.json();
-        status.textContent = `Detector ready. Trained on ${data.samples} samples.`;
-        document.getElementById("normalBtn").disabled = false;
-        document.getElementById("anomalyBtn").disabled = false;
-      } catch (e) {
-        status.textContent = `Failed: ${e.name === "AbortError" ? "Server timeout. Try again." : "Network error."}`;
-      } finally {
-        btn.disabled = false;
-        hint.style.display = "none";
-      }
-    }
-
-    async function detect(anomalous) {
+    async function detect(kind) {
       const status = document.getElementById("detectStatus");
       const output = document.getElementById("detectOutput");
       const hint = document.getElementById("coldStartHint");
@@ -141,10 +95,8 @@
       hint.style.display = "block";
 
       try {
-        const res = await fetchWithTimeout(`${API_URL}/detect`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(makeSnapshot(anomalous)),
+        const res = await fetchWithTimeout(`${API_URL}/demo/${kind}`, {
+          method: "GET",
         });
         const data = await res.json();
 
