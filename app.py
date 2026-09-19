@@ -61,13 +61,15 @@ class Snapshot(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "trained": detector.is_fitted}
+    return {"status": "ok", "trained": bool(detector.is_fitted)}
 
 
 @app.post("/detect")
 def detect(snapshot: Snapshot):
     s = snapshot.dict()
     is_anomaly, score = detector.predict(s)
+    is_anomaly = bool(is_anomaly)
+    score = float(score)
     alert = reporter.format_alert(s, score, baseline) if is_anomaly else None
     return {
         "is_anomaly": is_anomaly,
@@ -85,5 +87,7 @@ def demo(kind: str):
     else:
         return {"error": "kind must be 'normal' or 'anomaly'"}
     is_anomaly, score = detector.predict(s)
+    is_anomaly = bool(is_anomaly)
+    score = float(score)
     alert = reporter.format_alert(s, score, baseline) if is_anomaly else None
     return {"is_anomaly": is_anomaly, "score": score, "alert": alert}
