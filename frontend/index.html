@@ -11,7 +11,7 @@
       background: #0f1117;
       color: #e6edf3;
       padding: 2rem;
-      max-width: 900px;
+      max-width: 1000px;
       margin: 0 auto;
     }
     h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
@@ -37,6 +37,8 @@
     }
     button:hover { background: #2ea043; }
     button:disabled { background: #30363d; cursor: not-allowed; opacity: 0.6; }
+    button.danger { background: #a03030; }
+    button.danger:hover { background: #c04040; }
     .status { font-size: 0.85rem; color: #8b949e; margin-top: 0.5rem; }
     .anomaly { color: #f85149; font-weight: 600; }
     .normal { color: #3fb950; font-weight: 600; }
@@ -51,6 +53,41 @@
       word-break: break-word;
       margin-top: 1rem;
     }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+    .metric {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 0.75rem;
+    }
+    .metric-label { font-size: 0.7rem; color: #8b949e; text-transform: uppercase; }
+    .metric-value { font-size: 1.2rem; font-weight: 600; margin-top: 0.25rem; }
+    .live-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #3fb950;
+      margin-right: 6px;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .alert-item {
+      background: #0d1117;
+      border-left: 3px solid #f85149;
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      font-family: monospace;
+    }
   </style>
 </head>
 <body>
@@ -58,67 +95,166 @@
   <p class="subtitle">Zero-trust anomaly detection for distributed systems</p>
 
   <div class="card">
+    <h2><span class="live-dot"></span>Live System Metrics</h2>
+    <div class="metrics" id="liveMetrics">
+      <div class="metric"><div class="metric-label">CPU</div><div class="metric-value" id="m-cpu">—</div></div>
+      <div class="metric"><div class="metric-label">Memory</div><div class="metric-value" id="m-mem">—</div></div>
+      <div class="metric"><div class="metric-label">Disk</div><div class="metric-value" id="m-disk">—</div></div>
+      <div class="metric"><div class="metric-label">Net Sent</div><div class="metric-value" id="m-sent">—</div></div>
+      <div class="metric"><div class="metric-label">Net Recv</div><div class="metric-value" id="m-recv">—</div></div>
+      <div class="metric"><div class="metric-label">Score</div><div class="metric-value" id="m-score">—</div></div>
+    </div>
+    <div class="status" id="liveStatus">Connecting to stream...</div>
+  </div>
+
+  <div class="card">
+    <h2>Calibrate on Real Metrics</h2>
+    <p style="font-size:0.85rem;color:#8b949e;margin-bottom:1rem;">
+      Collect 30 real snapshots from this server and retrain the model.
+    </p>
+    <button onclick="calibrate()">Calibrate Now</button>
+    <div class="status" id="calibrateStatus"></div>
+  </div>
+
+  <div class="card">
     <h2>Test Detection</h2>
     <p style="font-size:0.85rem;color:#8b949e;margin-bottom:1rem;">
-      The model is trained at server startup. Click below to test.
+      Send a synthetic snapshot to verify the detector works.
     </p>
-    <button id="normalBtn" onclick="detect('normal')">Send Normal Snapshot</button>
-    <button id="anomalyBtn" onclick="detect('anomaly')">Send Anomalous Snapshot</button>
+    <button onclick="detect('normal')">Normal Snapshot</button>
+    <button class="danger" onclick="detect('anomaly')">Anomalous Snapshot</button>
     <div class="status" id="detectStatus"></div>
-    <div class="hint" id="coldStartHint" style="display:none;">
-      First request may take up to 50 seconds if the server was idle. Please wait...
-    </div>
     <pre id="detectOutput" style="display:none;"></pre>
+  </div>
+
+  <div class="card">
+    <h2>Recent Alerts</h2>
+    <button onclick="loadAlerts()">Refresh Alerts</button>
+    <div id="alertsList" style="margin-top:1rem;"></div>
   </div>
 
   <script>
     const API_URL = "https://anomaly-agent-lwvs.onrender.com";
 
-    async function fetchWithTimeout(url, options, timeoutMs = 70000) {
+    async function fetchWithTimeout(url, options = {}, timeoutMs = 70000) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const res = await fetch(url, { ...options, signal: controller.signal });
-        return res;
+        return await fetch(url, { ...options, signal: controller.signal });
       } finally {
         clearTimeout(timer);
       }
     }
 
-    async function detect(kind) {
-      const status = document.getElementById("detectStatus");
-      const output = document.getElementById("detectOutput");
-      const hint = document.getElementById("coldStartHint");
+    // ---------- Live Stream ----------
+    function startStream() {
+      const status = document.getElementById("liveStatus");
+      const source = new EventSource(`${API_URL}/stream`);
 
-      status.textContent = "Checking...";
-      output.style.display = "none";
-      hint.style.display = "block";
+      source.onopen = () => {
+        status.textContent = "Live. Updating every 5 seconds.";
+      };
 
+      source.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.error) {
+            status.textContent = `Stream error: ${data.error}`;
+            return;
+          }
+          const s = data.snapshot;
+          document.getElementById("m-cpu").textContent = s.cpu_percent.toFixed(1) + "%";
+          document.getElementById("m-mem").textContent = s.memory_percent.toFixed(1) + "%";
+          document.getElementById("m-disk").textContent = s.disk_percent.toFixed(1) + "%";
+          document.getElementById("m-sent").textContent = s.net_sent_mb.toFixed(1) + " MB";
+          document.getElementById("m-recv").textContent = s.net_recv_mb.toFixed(1) + " MB";
+
+          const scoreEl = document.getElementById("m-score");
+          scoreEl.textContent = data.score.toFixed(3);
+          scoreEl.style.color = data.is_anomaly ? "#f85149" : "#3fb950";
+        } catch (err) {
+          status.textContent = "Stream parse error.";
+        }
+      };
+
+      source.onerror = () => {
+        status.textContent = "Stream disconnected. Reconnecting...";
+      };
+    }
+
+    // ---------- Calibrate ----------
+    async function calibrate() {
+      const status = document.getElementById("calibrateStatus");
+      status.textContent = "Collecting 30 snapshots and retraining...";
       try {
-        const res = await fetchWithTimeout(`${API_URL}/demo/${kind}`, {
-          method: "GET",
+        const res = await fetchWithTimeout(`${API_URL}/calibrate?count=30`, {
+          method: "POST",
         });
         const data = await res.json();
-
         if (data.error) {
           status.textContent = `Error: ${data.error}`;
           return;
         }
+        status.textContent = `Calibrated on ${data.samples} real snapshots.`;
+      } catch (e) {
+        status.textContent = "Failed. Server may be waking up.";
+      }
+    }
 
+    // ---------- Detect ----------
+    async function detect(kind) {
+      const status = document.getElementById("detectStatus");
+      const output = document.getElementById("detectOutput");
+      status.textContent = "Checking...";
+      output.style.display = "none";
+      try {
+        const res = await fetchWithTimeout(`${API_URL}/demo/${kind}`, { method: "GET" });
+        const data = await res.json();
+        if (data.error) {
+          status.textContent = `Error: ${data.error}`;
+          return;
+        }
         status.innerHTML = data.is_anomaly
           ? `<span class="anomaly">ANOMALY DETECTED</span> (score: ${data.score.toFixed(4)})`
           : `<span class="normal">Normal</span> (score: ${data.score.toFixed(4)})`;
-
         if (data.alert) {
           output.textContent = data.alert;
           output.style.display = "block";
+          loadAlerts();
         }
       } catch (e) {
-        status.textContent = `Failed: ${e.name === "AbortError" ? "Server timeout. Try again." : "Network error."}`;
-      } finally {
-        hint.style.display = "none";
+        status.textContent = "Failed: server may be waking up.";
       }
     }
+
+    // ---------- Alerts ----------
+    async function loadAlerts() {
+      const list = document.getElementById("alertsList");
+      list.innerHTML = "Loading...";
+      try {
+        const res = await fetchWithTimeout(`${API_URL}/alerts?limit=10`);
+        const data = await res.json();
+        if (!data.alerts || data.alerts.length === 0) {
+          list.innerHTML = '<div class="status">No alerts yet.</div>';
+          return;
+        }
+        list.innerHTML = data.alerts
+          .map(a => `<div class="alert-item">${escapeHtml(a)}</div>`)
+          .join("");
+      } catch (e) {
+        list.innerHTML = '<div class="status">Failed to load alerts.</div>';
+      }
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    // Start live stream on page load
+    startStream();
+    loadAlerts();
   </script>
 </body>
 </html>
