@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets and local config
+.env
+*.log
+local_config.yaml
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data
+data/
+*.csv
+*.parquet
