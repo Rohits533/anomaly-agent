@@ -36,10 +36,11 @@
       margin-bottom: 0.5rem;
     }
     button:hover { background: #2ea043; }
-    button:disabled { background: #30363d; cursor: not-allowed; }
+    button:disabled { background: #30363d; cursor: not-allowed; opacity: 0.6; }
     .status { font-size: 0.85rem; color: #8b949e; margin-top: 0.5rem; }
     .anomaly { color: #f85149; font-weight: 600; }
     .normal { color: #3fb950; font-weight: 600; }
+    .hint { font-size: 0.75rem; color: #6e7681; margin-top: 0.5rem; }
     pre {
       background: #0d1117;
       padding: 1rem;
@@ -48,6 +49,7 @@
       font-size: 0.8rem;
       white-space: pre-wrap;
       word-break: break-word;
+      margin-top: 1rem;
     }
   </style>
 </head>
@@ -56,28 +58,30 @@
   <p class="subtitle">Zero-trust anomaly detection for distributed systems</p>
 
   <div class="card">
-    <h2>1. Train on Baseline</h2>
+    <h2>1. Initialize Detector</h2>
     <p style="font-size:0.85rem;color:#8b949e;margin-bottom:1rem;">
-      Send normal snapshots to teach the detector what "normal" looks like.
+      Trains the Isolation Forest on a synthetic baseline. Runs instantly.
     </p>
-    <button onclick="train()">Train Model</button>
-    <div class="status" id="trainStatus"></div>
+    <button id="trainBtn" onclick="train()">Initialize Detector</button>
+    <div class="status" id="trainStatus">Not initialized</div>
   </div>
 
   <div class="card">
-    <h2>2. Detect Anomaly</h2>
+    <h2>2. Test Detection</h2>
     <p style="font-size:0.85rem;color:#8b949e;margin-bottom:1rem;">
-      Send a new snapshot to see if it's normal or anomalous.
+      Send a snapshot and see if the detector flags it as anomalous.
     </p>
-    <button onclick="detect(false)">Send Normal Snapshot</button>
-    <button onclick="detect(true)">Send Anomalous Snapshot</button>
+    <button id="normalBtn" onclick="detect(false)" disabled>Send Normal Snapshot</button>
+    <button id="anomalyBtn" onclick="detect(true)" disabled>Send Anomalous Snapshot</button>
     <div class="status" id="detectStatus"></div>
-    <pre id="detectOutput" style="margin-top:1rem;display:none;"></pre>
+    <div class="hint" id="coldStartHint" style="display:none;">
+      First request may take up to 50 seconds if the server was idle. Please wait...
+    </div>
+    <pre id="detectOutput" style="display:none;"></pre>
   </div>
 
   <script>
-    // IMPORTANT: Replace this with your actual Render backend URL after deploying
-    const API_URL = "https://anomaly-agent.onrender.com";
+    const API_URL = "https://anomaly-agent-lwvs.onrender.com";
 
     function makeSnapshot(anomalous) {
       return {
@@ -90,49 +94,77 @@
       };
     }
 
-    async function train() {
-      const status = document.getElementById("trainStatus");
-      status.textContent = "Training...";
-      // Create 50 normal snapshots
-      const snapshots = Array.from({ length: 50 }, () => makeSnapshot(false));
+    async function fetchWithTimeout(url, options, timeoutMs = 60000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const res = await fetch(`${API_URL}/train`, {
+        const res = await fetch(url, { ...options, signal: controller.signal });
+        return res;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async function train() {
+      const btn = document.getElementById("trainBtn");
+      const status = document.getElementById("trainStatus");
+      const hint = document.getElementById("coldStartHint");
+
+      btn.disabled = true;
+      status.textContent = "Initializing...";
+      hint.style.display = "block";
+
+      try {
+        const res = await fetchWithTimeout(`${API_URL}/train`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ snapshots }),
         });
         const data = await res.json();
-        status.textContent = data.error ? `Error: ${data.error}` : `Trained on ${data.samples} samples.`;
+        status.textContent = `Detector ready. Trained on ${data.samples} samples.`;
+        document.getElementById("normalBtn").disabled = false;
+        document.getElementById("anomalyBtn").disabled = false;
       } catch (e) {
-        status.textContent = "Failed to reach backend. Is it deployed?";
+        status.textContent = `Failed: ${e.name === "AbortError" ? "Server timeout. Try again." : "Network error."}`;
+      } finally {
+        btn.disabled = false;
+        hint.style.display = "none";
       }
     }
 
     async function detect(anomalous) {
       const status = document.getElementById("detectStatus");
       const output = document.getElementById("detectOutput");
+      const hint = document.getElementById("coldStartHint");
+
       status.textContent = "Checking...";
       output.style.display = "none";
+      hint.style.display = "block";
+
       try {
-        const res = await fetch(`${API_URL}/detect`, {
+        const res = await fetchWithTimeout(`${API_URL}/detect`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(makeSnapshot(anomalous)),
         });
         const data = await res.json();
+
         if (data.error) {
           status.textContent = `Error: ${data.error}`;
           return;
         }
+
         status.innerHTML = data.is_anomaly
           ? `<span class="anomaly">ANOMALY DETECTED</span> (score: ${data.score.toFixed(4)})`
           : `<span class="normal">Normal</span> (score: ${data.score.toFixed(4)})`;
+
         if (data.alert) {
           output.textContent = data.alert;
           output.style.display = "block";
         }
       } catch (e) {
-        status.textContent = "Failed to reach backend.";
+        status.textContent = `Failed: ${e.name === "AbortError" ? "Server timeout. Try again." : "Network error."}`;
+      } finally {
+        hint.style.display = "none";
       }
     }
   </script>
